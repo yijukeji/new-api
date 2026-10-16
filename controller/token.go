@@ -37,11 +37,57 @@ type tokenRequest struct {
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
+	// 消费限制同样用指针：旧客户端未传时更新保留原配置，不会意外关闭。
+	SpendLimitEnabled  *bool `json:"spend_limit_enabled"`
+	SpendLimitFiveHour *int  `json:"spend_limit_five_hour"`
+	SpendLimitDaily    *int  `json:"spend_limit_daily"`
+	SpendLimitWeekly   *int  `json:"spend_limit_weekly"`
 }
 
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	AutoGroups []string             `json:"auto_groups"`
+	SpendUsage *tokenSpendUsageView `json:"spend_usage,omitempty"`
+}
+
+// tokenSpendUsageView 为详情接口展示的当前窗口用量，重置时间为 0 表示窗口尚未开启。
+type tokenSpendUsageView struct {
+	FiveHourUsed  int   `json:"five_hour_used"`
+	FiveHourReset int64 `json:"five_hour_reset"`
+	DailyUsed     int   `json:"daily_used"`
+	DailyReset    int64 `json:"daily_reset"`
+	WeeklyUsed    int   `json:"weekly_used"`
+	WeeklyReset   int64 `json:"weekly_reset"`
+}
+
+// applyTokenSpendLimitRequest 校验并写入请求中出现的消费限制字段，未出现的保持原值。
+func applyTokenSpendLimitRequest(c *gin.Context, request *tokenRequest, token *model.Token) bool {
+	if request.SpendLimitEnabled != nil {
+		token.SpendLimitEnabled = *request.SpendLimitEnabled
+	}
+	maxQuotaValue := maxTokenQuota()
+	for _, limit := range []struct {
+		value  *int
+		target *int
+	}{
+		{request.SpendLimitFiveHour, &token.SpendLimitFiveHour},
+		{request.SpendLimitDaily, &token.SpendLimitDaily},
+		{request.SpendLimitWeekly, &token.SpendLimitWeekly},
+	} {
+		if limit.value == nil {
+			continue
+		}
+		if *limit.value < 0 {
+			common.ApiErrorT(c, "Quota value cannot be negative")
+			return false
+		}
+		if *limit.value > maxQuotaValue {
+			common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxQuotaValue)})
+			return false
+		}
+		*limit.target = *limit.value
+	}
+	return true
 }
 
 func maxTokenQuota() int {
@@ -172,7 +218,19 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+	response := buildMaskedTokenResponse(token)
+	// 用量只用于展示；读取失败不应让密钥详情（含编辑）不可用，省略即可。
+	if usage, usageErr := model.GetTokenSpendUsageView(token.Id); usageErr != nil {
+		common.SysError(common.LogText("failed to load token spend usage (tokenId=%d): %s", token.Id, usageErr.Error()))
+	} else {
+		fiveHourReset, dailyReset, weeklyReset := usage.NextResets()
+		response.SpendUsage = &tokenSpendUsageView{
+			FiveHourUsed: usage.FiveHourUsed, FiveHourReset: fiveHourReset,
+			DailyUsed: usage.DayUsed, DailyReset: dailyReset,
+			WeeklyUsed: usage.WeekUsed, WeeklyReset: weeklyReset,
+		}
+	}
+	common.ApiSuccess(c, response)
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
@@ -364,6 +422,9 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
+	if !applyTokenSpendLimitRequest(c, &request, &cleanToken) {
+		return
+	}
 	err = cleanToken.Insert()
 	if err != nil {
 		common.ApiError(c, err)
@@ -459,6 +520,9 @@ func UpdateToken(c *gin.Context) {
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
 		}
+		if !applyTokenSpendLimitRequest(c, &request, cleanToken) {
+			return
+		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 		if token.Group != "auto" {
@@ -496,6 +560,9 @@ func UpdateToken(c *gin.Context) {
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
+			{"spend_limit_enabled", previous.SpendLimitEnabled != cleanToken.SpendLimitEnabled},
+			{"spend_limits", previous.SpendLimitFiveHour != cleanToken.SpendLimitFiveHour ||
+				previous.SpendLimitDaily != cleanToken.SpendLimitDaily || previous.SpendLimitWeekly != cleanToken.SpendLimitWeekly},
 		} {
 			if field.changed {
 				changedFields = append(changedFields, field.name)

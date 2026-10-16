@@ -238,3 +238,55 @@ func TestDirectOpenAIResponsesKeepsExistingParameters(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, body, string(encoded))
 }
+
+func TestChannelTestStreamingMode(t *testing.T) {
+	channelWith := func(channelType int, testModel string, models string) *model.Channel {
+		channel := &model.Channel{Type: channelType, Models: models}
+		if testModel != "" {
+			channel.TestModel = lo.ToPtr(testModel)
+		}
+		return channel
+	}
+
+	automatic := []struct {
+		name          string
+		channel       *model.Channel
+		scheduleModel string
+		want          bool
+	}{
+		{"codex always streams", channelWith(constant.ChannelTypeCodex, "", "gpt-5-codex"), "", true},
+		{"gpt channel test model streams", channelWith(constant.ChannelTypeOpenAI, "gpt-4o", "gpt-4o"), "", true},
+		{"chatgpt first model streams", channelWith(constant.ChannelTypeOpenAI, "", "chatgpt-4o-latest,gpt-4o"), "", true},
+		{"no models falls back to gpt-4o-mini and streams", channelWith(constant.ChannelTypeOpenAI, "", ""), "", true},
+		{"scheduled model overrides channel test model", channelWith(constant.ChannelTypeOpenAI, "gpt-4o", "gpt-4o,deepseek-chat"), "deepseek-chat", false},
+		{"claude model stays non-streaming", channelWith(constant.ChannelTypeOpenAI, "claude-sonnet-4", "claude-sonnet-4"), "", false},
+		{"anthropic channel stays non-streaming", channelWith(constant.ChannelTypeAnthropic, "", "gpt-4o"), "", false},
+		{"other models stay non-streaming", channelWith(constant.ChannelTypeOpenAI, "", "deepseek-chat"), "", false},
+	}
+	for _, tc := range automatic {
+		t.Run("automatic/"+tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shouldUseStreamForAutomaticChannelTest(tc.channel, tc.scheduleModel))
+		})
+	}
+
+	codex := channelWith(constant.ChannelTypeCodex, "", "gpt-5-codex")
+	openAI := channelWith(constant.ChannelTypeOpenAI, "", "gpt-4o")
+	manual := []struct {
+		name         string
+		channel      *model.Channel
+		endpointType string
+		requested    bool
+		want         bool
+	}{
+		{"codex quick test without stream flag streams", codex, "", false, true},
+		{"codex responses endpoint streams", codex, string(constant.EndpointTypeOpenAIResponse), false, true},
+		{"codex responses compaction keeps non-streaming", codex, string(constant.EndpointTypeOpenAIResponseCompact), false, false},
+		{"other channel honors caller without stream flag", openAI, "", false, false},
+		{"other channel honors caller stream flag", openAI, "", true, true},
+	}
+	for _, tc := range manual {
+		t.Run("manual/"+tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shouldUseStreamForManualChannelTest(tc.channel, tc.endpointType, tc.requested))
+		})
+	}
+}

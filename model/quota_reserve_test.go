@@ -259,3 +259,90 @@ func TestTokenCacheInitPreservesLiveQuotaAndFenceBlocksStaleSnapshot(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, 100, cached.RemainQuota)
 }
+
+func TestTokenSpendUsageRolledResetsExpiredWindows(t *testing.T) {
+	// 2026-10-15 00:00:00 +08:00
+	cstMidnight := time.Date(2026, 10, 15, 0, 0, 0, 0, tokenSpendDayZone).Unix()
+	base := TokenSpendUsage{
+		FiveHourStart: cstMidnight - 3600, FiveHourUsed: 10,
+		DayStart: cstMidnight - 86400, DayUsed: 20,
+		WeekStart: cstMidnight - 8*86400, WeekUsed: 30,
+	}
+	tests := []struct {
+		name string
+		now  int64
+		want TokenSpendUsage
+	}{
+		{
+			name: "before CST midnight keeps five-hour and day usage while week advances",
+			now:  cstMidnight - 1,
+			want: TokenSpendUsage{FiveHourStart: cstMidnight - 3600, FiveHourUsed: 10, DayStart: cstMidnight - 86400, DayUsed: 20, WeekStart: cstMidnight - 8*86400 + 7*86400, WeekUsed: 0},
+		},
+		{
+			name: "after CST midnight and five hours resets day and closes five-hour window",
+			now:  cstMidnight + 4*3600,
+			want: TokenSpendUsage{DayStart: cstMidnight, WeekStart: cstMidnight - 86400},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, base.rolled(tc.now))
+		})
+	}
+}
+
+func TestTokenSpendLimitReserveSettleAndRefund(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
+
+	token := createReserveTestToken(t, 0)
+	token.UnlimitedQuota = true
+	token.SpendLimitEnabled = true
+	token.SpendLimitFiveHour = 100
+	require.NoError(t, token.Update())
+
+	require.NoError(t, ReserveTokenSpend(token.Key, 60))
+	reserved, err := TryReserveTokenQuota(token.Id, token.Key, 60, true)
+	require.NoError(t, err)
+	assert.True(t, reserved)
+	usage, err := GetTokenSpendUsageView(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 60, usage.FiveHourUsed, "unlimited reserve must not count twice")
+
+	var limitErr *TokenSpendLimitError
+	require.ErrorAs(t, ReserveTokenSpend(token.Key, 50), &limitErr)
+	assert.Positive(t, limitErr.RetryAfter)
+
+	// 已放行请求的超额结算完整入账，之后连预扣 0 的请求也被拒绝。
+	require.NoError(t, DecreaseTokenQuota(token.Id, token.Key, 50))
+	usage, err = GetTokenSpendUsageView(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 110, usage.FiveHourUsed)
+	require.ErrorAs(t, ReserveTokenSpend(token.Key, 0), &limitErr)
+
+	// 退款最低扣到 0，随后恢复放行。
+	require.NoError(t, IncreaseTokenQuota(token.Id, token.Key, 500))
+	usage, err = GetTokenSpendUsageView(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 0, usage.FiveHourUsed)
+	require.NoError(t, ReserveTokenSpend(token.Key, 0))
+}
+
+func TestTokenSpendLimitDisabledDoesNotRecordUsage(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
+
+	token := createReserveTestToken(t, 100)
+	token.SpendLimitEnabled = true
+	token.SpendLimitFiveHour = 1
+	require.NoError(t, token.Update())
+	require.NoError(t, ReserveTokenSpend(token.Key, 0))
+
+	token.SpendLimitEnabled = false
+	require.NoError(t, token.Update())
+	require.NoError(t, ReserveTokenSpend(token.Key, 50))
+	require.NoError(t, DecreaseTokenQuota(token.Id, token.Key, 10))
+	usage, err := GetTokenSpendUsageView(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 0, usage.FiveHourUsed)
+}

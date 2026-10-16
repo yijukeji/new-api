@@ -47,7 +47,25 @@ export const apiKeySchema = z.object({
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),
   allow_user_quota_query: z.boolean().optional().default(false),
+  spend_limit_enabled: z.boolean().optional(),
+  spend_limit_five_hour: z.number().optional(),
+  spend_limit_daily: z.number().optional(),
+  spend_limit_weekly: z.number().optional(),
+  // Only returned by the detail endpoint. A reset time of 0 means the window
+  // has not started yet.
+  spend_usage: z
+    .object({
+      five_hour_used: z.number(),
+      five_hour_reset: z.number(),
+      daily_used: z.number(),
+      daily_reset: z.number(),
+      weekly_used: z.number(),
+      weekly_reset: z.number(),
+    })
+    .optional(),
 })
+
+export type ApiKeySpendUsage = NonNullable<ApiKey['spend_usage']>
 
 export type ApiKey = z.infer<typeof apiKeySchema>
 
@@ -96,6 +114,10 @@ export interface ApiKeyFormData {
   group: string
   auto_groups: string[]
   cross_group_retry: boolean
+  spend_limit_enabled: boolean
+  spend_limit_five_hour: number
+  spend_limit_daily: number
+  spend_limit_weekly: number
 }
 
 export interface TokenAutoGroupsConfig {

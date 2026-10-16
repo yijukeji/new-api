@@ -142,6 +142,13 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
 	}
 
+	// 实时会话在消费时才扣费，这里只检查是否已达消费限制；用量由随后的 PostConsumeQuota 记入。
+	if token.SpendLimitActive() {
+		if err := model.ReserveTokenSpend(token.Key, 0); err != nil {
+			return err
+		}
+	}
+
 	if !token.UnlimitedQuota && token.RemainQuota < quota {
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
@@ -410,8 +417,17 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	if relayInfo.IsPlayground {
 		return nil
 	}
+	// 消费限制先于密钥额度检查，且不受“无限额度”影响；预扣 0 时也检查是否已达上限。
+	if relayInfo.TokenSpendLimited {
+		if err := model.ReserveTokenSpend(relayInfo.TokenKey, quota); err != nil {
+			return err
+		}
+	}
 	// 原子预扣：检查与扣减在同一操作中完成，并发请求不可能同时通过检查后超扣。
 	reserved, err := model.TryReserveTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota, relayInfo.TokenUnlimited)
+	if relayInfo.TokenSpendLimited && (err != nil || !reserved) {
+		model.ReleaseTokenSpend(relayInfo.TokenId, relayInfo.TokenKey, quota)
+	}
 	if err != nil {
 		return err
 	}

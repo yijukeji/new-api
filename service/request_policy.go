@@ -37,7 +37,8 @@ type PolicyEvent struct {
 
 // RequestPolicyState records how one request was routed so administrators can
 // read the decision flow in the log details. Channel selection and the retry
-// decision stay in the relay flows; this state only records them.
+// decision stay in the relay flows; failed channels are also excluded from
+// subsequent attempts in this request.
 type RequestPolicyState struct {
 	FinalLogged       bool
 	StartedAt         time.Time
@@ -48,6 +49,7 @@ type RequestPolicyState struct {
 	RuleName          string
 	Successful        bool
 	OutcomeRecorded   bool
+	FailedChannels    []int
 	mu                sync.Mutex
 	events            []PolicyEvent
 }
@@ -111,12 +113,19 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 		source = "local"
 	}
 	state := RequestPolicy(c)
+	if channelID > 0 && !slices.Contains(state.FailedChannels, channelID) {
+		state.FailedChannels = append(state.FailedChannels, channelID)
+	}
+	cooling := recordChannelCooldown(c, channelID, err)
 	event := PolicyEvent{ChannelID: channelID, Status: err.StatusCode, ErrorCode: string(err.GetErrorCode()), ErrorSource: source, Decision: PolicyDecision{Action: "failure", Reason: "upstream_failure", Source: source}}
 	if source == "local" {
 		event.Decision.Reason = "local_rejection"
 	}
 	state.AddEvent(event)
 	event.Decision, event.Health = decision, "unchanged"
+	if cooling {
+		event.Health = "channel_cooldown_started"
+	}
 	if source != "local" && c.GetBool("auto_ban") && ShouldDisableChannel(err) {
 		event.Health = "channel_disable_requested"
 		if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
@@ -140,6 +149,18 @@ func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) 
 	channelID := 0
 	if c != nil {
 		channelID = c.GetInt("channel_id")
+	}
+	cooling := false
+	if !state.Successful && stream != nil {
+		outcome := stream.OutcomeSnapshot()
+		if outcome.Response == relaycommon.ResponseOutcomeFailed {
+			apiErr := types.WithOpenAIError(types.OpenAIError{Type: outcome.ErrorType, Code: outcome.ErrorCode, Message: "upstream stream failed"}, outcome.ErrorStatus)
+			cooling = recordChannelCooldown(c, channelID, apiErr)
+		}
+	}
+	finishChannelProbe(c, channelID, state.Successful)
+	if cooling {
+		state.AddEvent(PolicyEvent{ChannelID: channelID, Health: "channel_cooldown_started", Decision: PolicyDecision{Action: "stop", Reason: "stream_not_successful", Source: "upstream"}})
 	}
 	state.AddEvent(PolicyEvent{ChannelID: channelID, Decision: decision})
 }

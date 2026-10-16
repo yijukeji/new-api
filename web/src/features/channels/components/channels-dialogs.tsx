@@ -26,6 +26,7 @@ import { FetchModelsDialog } from './dialogs/fetch-models-dialog'
 import { InferenceStatusDialog } from './dialogs/inference-status-dialog'
 import { MultiKeyManageDialog } from './dialogs/multi-key-manage-dialog'
 import { OllamaModelsDialog } from './dialogs/ollama-models-dialog'
+import { ScheduledTestDialog } from './dialogs/scheduled-test-dialog'
 import { TagBatchEditDialog } from './dialogs/tag-batch-edit-dialog'
 import { UpstreamUpdateDialog } from './dialogs/upstream-update-dialog'
 import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
@@ -50,6 +51,13 @@ export function ChannelsDialogs() {
             onTestChannel={() => setOpen('test-channel')}
           />
         )}
+      {open === 'scheduled-test' && currentRow && (
+        <ScheduledTestDialog
+          key={currentRow.id}
+          channel={currentRow}
+          onClose={() => setOpen(null)}
+        />
+      )}
       {/* Channel Create/Update Drawer */}
       <ChannelMutateDrawer
         open={open === 'create-channel' || open === 'update-channel'}

@@ -226,6 +226,15 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			Description: "quota_not_enough",
 		}
 	}
+	// 旧版 Midjourney 只在提交后扣费，需在提交前单独检查消费限制。
+	if info.TokenSpendLimited {
+		if err := service.PreConsumeTokenQuota(info, 0); err != nil {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: "token_spend_limit_exceeded",
+			}
+		}
+	}
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
@@ -547,6 +556,15 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		return &dto.MidjourneyResponse{
 			Code:        4,
 			Description: "quota_not_enough",
+		}
+	}
+	// 旧版 Midjourney 只在提交后扣费，需在提交前单独检查消费限制。
+	if consumeQuota && relayInfo.TokenSpendLimited {
+		if err := service.PreConsumeTokenQuota(relayInfo, 0); err != nil {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: "token_spend_limit_exceeded",
+			}
 		}
 	}
 

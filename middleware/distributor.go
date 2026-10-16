@@ -33,6 +33,7 @@ type ModelRequest struct {
 
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		defer service.ReleaseChannelProbes(c)
 		var channel *model.Channel
 		defer func() {
 			if c.Writer.Status() >= 400 {
@@ -124,7 +125,8 @@ func Distribute() func(c *gin.Context) {
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+		policy := service.RequestPolicy(c)
+		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && (policy.Attempts == 0 || policy.Successful) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}

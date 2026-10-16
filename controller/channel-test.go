@@ -94,20 +94,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	testModel = strings.TrimSpace(testModel)
-	if testModel == "" {
-		if channel.TestModel != nil && *channel.TestModel != "" {
-			testModel = strings.TrimSpace(*channel.TestModel)
-		} else {
-			models := channel.GetModels()
-			if len(models) > 0 {
-				testModel = strings.TrimSpace(models[0])
-			}
-			if testModel == "" {
-				testModel = "gpt-4o-mini"
-			}
-		}
-	}
+	testModel = resolveChannelTestModel(channel, testModel)
 
 	endpointType = normalizeChannelTestEndpoint(channel, endpointType)
 
@@ -666,8 +653,56 @@ func validateTestResponseBody(respBody []byte, isStream bool) error {
 	return nil
 }
 
-func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
-	return channel != nil && channel.Type == constant.ChannelTypeCodex
+// resolveChannelTestModel picks the requested model, then the channel test
+// model, then the channel's first model, falling back to gpt-4o-mini.
+func resolveChannelTestModel(channel *model.Channel, testModel string) string {
+	testModel = strings.TrimSpace(testModel)
+	if testModel != "" {
+		return testModel
+	}
+	if channel.TestModel != nil && *channel.TestModel != "" {
+		return strings.TrimSpace(*channel.TestModel)
+	}
+	if models := channel.GetModels(); len(models) > 0 {
+		testModel = strings.TrimSpace(models[0])
+	}
+	if testModel == "" {
+		testModel = "gpt-4o-mini"
+	}
+	return testModel
+}
+
+// shouldUseStreamForManualChannelTest honors the caller's stream flag, except
+// that Codex Responses upstreams reject stream=false ("Stream must be set to
+// true"), so the quick test, which sends no stream flag, must still stream.
+// Responses compaction has no streaming form and keeps its own request.
+func shouldUseStreamForManualChannelTest(channel *model.Channel, endpointType string, requested bool) bool {
+	if channel != nil && channel.Type == constant.ChannelTypeCodex &&
+		normalizeChannelTestEndpoint(channel, endpointType) == string(constant.EndpointTypeOpenAIResponse) {
+		return true
+	}
+	return requested
+}
+
+// shouldUseStreamForAutomaticChannelTest decides streaming for automatic and
+// scheduled tests, which have no caller to choose. Codex Responses upstreams
+// reject non-streaming requests, and gpt-*/chatgpt-* test models are probed in
+// streaming mode; Anthropic channels and Claude models keep non-streaming.
+func shouldUseStreamForAutomaticChannelTest(channel *model.Channel, testModel string) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		return true
+	}
+	if channel.Type == constant.ChannelTypeAnthropic {
+		return false
+	}
+	resolved := strings.ToLower(resolveChannelTestModel(channel, testModel))
+	if strings.HasPrefix(resolved, "claude") {
+		return false
+	}
+	return strings.HasPrefix(resolved, "gpt-") || strings.HasPrefix(resolved, "chatgpt-")
 }
 
 func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
@@ -864,7 +899,8 @@ func TestChannel(c *gin.Context) {
 	//}()
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
-	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	requestedStream, _ := strconv.ParseBool(c.Query("stream"))
+	isStream := shouldUseStreamForManualChannelTest(channel, endpointType, requestedStream)
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -922,7 +958,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
-	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel, ""))
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		return summary

@@ -146,8 +146,24 @@ function ChannelCardComponent({
                 </dd>
               </div>
             </dl>
+            {!isTagRow && (
+              <div className='col-span-3 flex items-center justify-between gap-2'>
+                <span className={labelClass}>{t('Circuit breaker')}</span>
+                {renderCell('cooldown_active')}
+              </div>
+            )}
           </div>
         </StatusBadgeTypeContext.Provider>
+
+        {row.original.type === 57 && !isTagRow && (
+          <section
+            className='min-w-0 space-y-1'
+            aria-label={t('Session windows')}
+          >
+            <h3 className={labelClass}>{t('Session windows')}</h3>
+            {renderCell('session_usage')}
+          </section>
+        )}
 
         {/* Groups retain their compact, full-width footer. */}
         <div className='min-w-0'>

@@ -33,6 +33,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  Clock,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -280,6 +281,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
+          {/* Scheduled Test */}
+          <DropdownMenuItem
+            onClick={() => {
+              setCurrentRow(channel)
+              setOpen('scheduled-test')
+            }}
+          >
+            {t('Scheduled test')}
+            <DropdownMenuShortcut>
+              <Clock size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
           {/* Query Balance */}
           <DropdownMenuItem onClick={handleQueryBalance}>
             {t('Query Balance')}

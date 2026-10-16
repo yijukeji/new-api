@@ -88,6 +88,7 @@ import {
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
+import { ChannelCooldownCell } from './channel-cooldown-cell'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
@@ -99,6 +100,7 @@ import {
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
+import { SessionUsageCell } from './session-usage-cell'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -1172,12 +1174,29 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      {
+        accessorKey: 'cooldown_active',
+        header: t('Circuit breaker'),
+        cell: ({ row }) => <ChannelCooldownCell channel={row.original} />,
+        size: 140,
+        enableSorting: false,
+      },
+
       // Balance column (Used/Remaining)
       {
         accessorKey: 'balance',
         header: t('Used / Remaining'),
         cell: ({ row }) => <BalanceCell channel={row.original} />,
         size: 180,
+      },
+
+      // Codex session window usage column
+      {
+        id: 'session_usage',
+        header: t('Session windows'),
+        cell: ({ row }) => <SessionUsageCell channel={row.original} />,
+        size: 240,
+        enableSorting: false,
       },
 
       // Response Time column

@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
-import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
+import {
+  parseQuotaFromDollars,
+  quotaUnitsToDollars,
+  quotaUnitsToEditableAmount,
+} from '@/lib/format'
 
 import { DEFAULT_GROUP } from '../constants'
 import type { ApiKey, ApiKeyFormData } from '../types'
@@ -45,6 +49,16 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       auto_groups_mode: z.enum(['inherit', 'custom']),
       auto_groups: z.array(z.string()),
       cross_group_retry: z.boolean().optional(),
+      spend_limit_enabled: z.boolean(),
+      spend_limit_five_hour_amount: z
+        .number()
+        .min(0, t('Quota must be zero or greater')),
+      spend_limit_daily_amount: z
+        .number()
+        .min(0, t('Quota must be zero or greater')),
+      spend_limit_weekly_amount: z
+        .number()
+        .min(0, t('Quota must be zero or greater')),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -116,6 +130,10 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   auto_groups_mode: 'inherit',
   auto_groups: [],
   cross_group_retry: true,
+  spend_limit_enabled: false,
+  spend_limit_five_hour_amount: 0,
+  spend_limit_daily_amount: 0,
+  spend_limit_weekly_amount: 0,
   tokenCount: 1,
 }
 
@@ -160,6 +178,12 @@ export function transformFormDataToPayload(
         ? data.auto_groups
         : [],
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    spend_limit_enabled: data.spend_limit_enabled,
+    spend_limit_five_hour: parseQuotaFromDollars(
+      data.spend_limit_five_hour_amount
+    ),
+    spend_limit_daily: parseQuotaFromDollars(data.spend_limit_daily_amount),
+    spend_limit_weekly: parseQuotaFromDollars(data.spend_limit_weekly_amount),
   }
 }
 
@@ -197,6 +221,16 @@ export function transformApiKeyToFormDefaults(
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,
+    spend_limit_enabled: !!apiKey.spend_limit_enabled,
+    spend_limit_five_hour_amount: quotaUnitsToEditableAmount(
+      apiKey.spend_limit_five_hour ?? 0
+    ),
+    spend_limit_daily_amount: quotaUnitsToEditableAmount(
+      apiKey.spend_limit_daily ?? 0
+    ),
+    spend_limit_weekly_amount: quotaUnitsToEditableAmount(
+      apiKey.spend_limit_weekly ?? 0
+    ),
     tokenCount: 1,
   }
 }

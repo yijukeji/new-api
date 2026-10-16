@@ -66,7 +66,7 @@ if redis.call('EXISTS', KEYS[2]) == 1 then
   return 0
 end
 if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('EXPIRE', KEYS[1], ARGV[18])
+  redis.call('EXPIRE', KEYS[1], ARGV[22])
   return 2
 end
 redis.call('HSET', KEYS[1],
@@ -75,8 +75,9 @@ redis.call('HSET', KEYS[1],
   'UnlimitedQuota', ARGV[8], 'ModelLimitsEnabled', ARGV[9], 'ModelLimits', ARGV[10],
   'AllowIps', ARGV[11], 'Group', ARGV[12], 'CrossGroupRetry', ARGV[13],
   'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16],
-  'AllowUserQuotaQuery', ARGV[17])
-redis.call('EXPIRE', KEYS[1], ARGV[18])
+  'AllowUserQuotaQuery', ARGV[17], 'SpendLimitEnabled', ARGV[18],
+  'SpendLimitFiveHour', ARGV[19], 'SpendLimitDaily', ARGV[20], 'SpendLimitWeekly', ARGV[21])
+redis.call('EXPIRE', KEYS[1], ARGV[22])
 return 1`
 
 	return common.RDB.Eval(context.Background(), script, []string{
@@ -88,6 +89,8 @@ return 1`
 		token.ModelLimits, allowIps, token.Group, strconv.FormatBool(token.CrossGroupRetry),
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
 		strconv.FormatBool(token.AllowUserQuotaQuery),
+		strconv.FormatBool(token.SpendLimitEnabled), token.SpendLimitFiveHour, token.SpendLimitDaily,
+		token.SpendLimitWeekly,
 		tokenCacheTTLSeconds(),
 	).Int()
 }

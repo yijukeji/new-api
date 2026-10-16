@@ -32,6 +32,11 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
 	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
+	// 消费限制：开启后各窗口的非零上限同时生效，单位为额度，0 表示不限
+	SpendLimitEnabled  bool `json:"spend_limit_enabled"`
+	SpendLimitFiveHour int  `json:"spend_limit_five_hour" gorm:"default:0"`
+	SpendLimitDaily    int  `json:"spend_limit_daily" gorm:"default:0"`
+	SpendLimitWeekly   int  `json:"spend_limit_weekly" gorm:"default:0"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -316,7 +321,8 @@ func (token *Token) Update() (err error) {
 	}
 	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
-		"allow_user_quota_query").Updates(token).Error
+		"allow_user_quota_query", "spend_limit_enabled", "spend_limit_five_hour", "spend_limit_daily",
+		"spend_limit_weekly").Updates(token).Error
 }
 
 func (token *Token) SelectUpdate() (err error) {
@@ -381,6 +387,7 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
+	applyTokenSpendDelta(tokenId, key, -quota)
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
@@ -412,6 +419,12 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
+	applyTokenSpendDelta(id, key, quota)
+	return debitTokenQuota(id, key, quota)
+}
+
+// debitTokenQuota 扣减密钥额度，不计入消费限制用量（调用方已计入）。
+func debitTokenQuota(id int, key string, quota int) error {
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {

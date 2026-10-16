@@ -786,6 +786,9 @@ func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 	if err == nil {
 		err = errors.New(taskErr.Message)
 	}
+	if taskErr.LocalError {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, taskErr.StatusCode, types.ErrOptionWithSkipRetry())
+	}
 	return types.NewOpenAIError(err, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
 }
 

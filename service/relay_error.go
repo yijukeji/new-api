@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,12 @@ import (
 func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) PolicyDecision {
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}
+	}
+	if c != nil && c.Writer != nil && c.Writer.Written() && c.Writer.Status() != http.StatusSwitchingProtocols {
+		return PolicyDecision{Action: "stop", Reason: "response_already_started", Source: "system"}
 	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		source := RequestPolicy(c).SessionModeSource

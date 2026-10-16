@@ -92,6 +92,7 @@ import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
+import { ApiKeySpendLimitSection } from './api-key-spend-limit-section'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -672,6 +673,11 @@ export function ApiKeysMutateDrawer({
                 )}
               />
             </SideDrawerSection>
+
+            <ApiKeySpendLimitSection
+              form={form}
+              usage={isUpdate ? apiKeyData?.data?.spend_usage : undefined}
+            />
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <SideDrawerSection>

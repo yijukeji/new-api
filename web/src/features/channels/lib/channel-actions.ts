@@ -29,6 +29,7 @@ import {
   testChannel,
   updateChannel,
   updateChannelStatus,
+  resetChannelCooldown,
   batchUpdateChannelStatus,
   batchDeleteChannels,
   batchSetChannelTag,
@@ -115,6 +116,25 @@ function getChannelTestLabel(options?: {
 // ============================================================================
 // Single Channel Actions
 // ============================================================================
+
+export async function handleResetChannelCooldown(
+  id: number,
+  queryClient?: QueryClient
+): Promise<boolean> {
+  try {
+    const response = await resetChannelCooldown(id)
+    if (!response.success) {
+      handleServerError(response, i18next.t('Failed to reset channel cooldown'))
+      return false
+    }
+    toast.success(i18next.t('Channel cooldown cleared'))
+    queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.all })
+    return true
+  } catch (error) {
+    handleServerError(error, i18next.t('Failed to reset channel cooldown'))
+    return false
+  }
+}
 
 /**
  * Enable a channel

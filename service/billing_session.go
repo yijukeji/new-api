@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -209,10 +210,10 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		logger.LogInfo(c, common.LogText("user %d needs pre-consume %s (funding=%s)", s.relayInfo.UserId, logger.FormatQuota(effectiveQuota), s.funding.Source()))
 	}
 
-	// ---- 1) 预扣令牌额度 ----
-	if effectiveQuota > 0 {
+	// ---- 1) 预扣令牌额度（开启消费限制时预扣 0 也要检查是否已达上限）----
+	if effectiveQuota > 0 || s.relayInfo.TokenSpendLimited {
 		if err := PreConsumeTokenQuota(s.relayInfo, effectiveQuota); err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return tokenReserveError(c, s.lang, err)
 		}
 		s.tokenConsumed = effectiveQuota
 	}
@@ -312,15 +313,30 @@ func (s *BillingSession) reserveToken(delta int) error {
 		return nil
 	}
 	if err := PreConsumeTokenQuota(s.relayInfo, delta); err != nil {
-		return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		return tokenReserveError(nil, s.lang, err)
 	}
 	return nil
 }
 
+// tokenReserveError 将密钥预扣失败映射为对外错误：消费限制超限返回 429，
+// 有请求上下文时附带 Retry-After；其余失败保持原有的 403。
+func tokenReserveError(c *gin.Context, lang string, err error) *types.NewAPIError {
+	var limitErr *model.TokenSpendLimitError
+	if !errors.As(err, &limitErr) {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+	}
+	if c != nil {
+		c.Header("Retry-After", strconv.FormatInt(limitErr.RetryAfter, 10))
+	}
+	message := i18n.Translate(lang, i18n.MsgQuotaTokenSpendLimitExceeded, map[string]any{"RetryAfter": limitErr.RetryAfter})
+	return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeTokenSpendLimitExceeded, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+}
+
 // shouldTrust 统一信任额度检查，适用于钱包和订阅。
 func (s *BillingSession) shouldTrust(c *gin.Context) bool {
-	// 异步任务（ForcePreConsume=true）必须预扣全额，不允许信任旁路
-	if s.relayInfo.ForcePreConsume {
+	// 异步任务（ForcePreConsume=true）必须预扣全额，不允许信任旁路；
+	// 开启消费限制的密钥也不能跳过预扣，否则窗口检查会被绕过
+	if s.relayInfo.ForcePreConsume || s.relayInfo.TokenSpendLimited {
 		return false
 	}
 

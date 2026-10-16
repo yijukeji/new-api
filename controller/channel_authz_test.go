@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -156,6 +157,49 @@ func TestChannelStatusValidation(t *testing.T) {
 	assert.True(t, isManageableChannelStatus(common.ChannelStatusManuallyDisabled))
 	assert.False(t, isManageableChannelStatus(common.ChannelStatusAutoDisabled))
 	assert.False(t, isManageableChannelStatus(0))
+}
+
+func TestResetChannelCooldownPreservesStatus(t *testing.T) {
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousRedis := common.RedisEnabled
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousType, previousLogType)
+		common.RedisEnabled = previousRedis
+	})
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.AuditLog{}))
+	for _, status := range []int{common.ChannelStatusEnabled, common.ChannelStatusManuallyDisabled, common.ChannelStatusAutoDisabled} {
+		channel := model.Channel{Name: "cooldown-reset", Type: 1, Status: status, Key: "unchanged-key"}
+		require.NoError(t, db.Create(&channel).Error)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/reset", nil)
+		ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+		ResetChannelCooldown(ctx)
+		var response struct {
+			Success bool `json:"success"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.True(t, response.Success, recorder.Body.String())
+		saved, err := model.GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, status, saved.Status)
+		assert.Equal(t, channel.Key, saved.Key)
+	}
+	for _, id := range []string{"bad", "0", "-1", "999999"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/reset", nil)
+		ctx.Params = gin.Params{{Key: "id", Value: id}}
+		ResetChannelCooldown(ctx)
+		var response struct {
+			Success bool `json:"success"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.False(t, response.Success, id)
+	}
 }
 
 // TestChannelFieldsAreClassified guards the fail-closed sensitivity check: every

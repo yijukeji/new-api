@@ -84,6 +84,48 @@ export async function getTaskPluginOptions(): Promise<TaskPluginOption[]> {
   return requireServerSuccess(response.data).data
 }
 
+export type ScheduledTestData = {
+  schedule: {
+    channel_id: number
+    enabled: boolean
+    cron: string
+    timezone: string
+    model: string
+    next_run: number
+    last_run: number
+  }
+  history: Array<{
+    time: number
+    success: boolean
+    duration_ms: number
+    model: string
+  }>
+}
+
+// Per-channel cron test configuration and its five most recent runs.
+export async function getChannelScheduledTest(
+  id: number
+): Promise<ScheduledTestData> {
+  const response = await api.get<{ success: boolean; data: ScheduledTestData }>(
+    `/api/channel/${id}/scheduled-test`
+  )
+  return requireServerSuccess(response.data).data
+}
+
+export async function saveChannelScheduledTest(
+  id: number,
+  values: Pick<
+    ScheduledTestData['schedule'],
+    'enabled' | 'cron' | 'timezone' | 'model'
+  >
+): Promise<void> {
+  const response = await api.put<{ success: boolean; message?: string }>(
+    `/api/channel/${id}/scheduled-test`,
+    values
+  )
+  requireServerSuccess(response.data)
+}
+
 export type CodexUsageResponse = {
   success: boolean
   message?: string
@@ -185,6 +227,20 @@ export async function updateChannel(
   const res = await api.put(
     '/api/channel/',
     { id, ...data },
+    channelActionConfig()
+  )
+  return res.data
+}
+
+/**
+ * Clear the temporary channel circuit without changing its enabled status.
+ */
+export async function resetChannelCooldown(
+  id: number
+): Promise<{ success: boolean; message?: string; data?: boolean }> {
+  const res = await api.post(
+    `/api/channel/${id}/cooldown/reset`,
+    undefined,
     channelActionConfig()
   )
   return res.data

@@ -207,7 +207,8 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 		return true, nil
 	}
 	if unlimited {
-		return true, DecreaseTokenQuota(id, key, quota)
+		// 预扣的消费限制用量已由 ReserveTokenSpend 计入，这里只扣减密钥额度。
+		return true, debitTokenQuota(id, key, quota)
 	}
 	if !common.RedisEnabled {
 		return reserveTokenQuotaDB(id, quota)

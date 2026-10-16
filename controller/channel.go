@@ -83,6 +83,28 @@ func channelIDsFromChannels(channels []*model.Channel) []int {
 	return ids
 }
 
+type channelWithCooldown struct {
+	*model.Channel
+	CooldownActive *bool `json:"cooldown_active"`
+}
+
+func channelsWithCooldowns(channels []*model.Channel) []channelWithCooldown {
+	states, err := service.GetChannelCooldowns(channelIDsFromChannels(channels))
+	if err != nil {
+		common.SysError(common.LogText("channel cooldown state read failed: %v", err))
+	}
+	items := make([]channelWithCooldown, 0, len(channels))
+	for _, channel := range channels {
+		item := channelWithCooldown{Channel: channel}
+		if channel != nil && err == nil {
+			active := states[channel.Id]
+			item.CooldownActive = &active
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
 func closeActiveChannelWebSockets(channelIDs []int) {
 	service.CloseActiveWebSocketsForChannels(channelIDs, service.ChannelDisabledCloseReason)
 }
@@ -275,7 +297,7 @@ func GetAllChannels(c *gin.Context) {
 		typeCounts[r.Type] = r.Count
 	}
 	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
+		"items":       channelsWithCooldowns(channelData),
 		"total":       total,
 		"page":        pageInfo.GetPage(),
 		"page_size":   pageInfo.GetPageSize(),
@@ -459,7 +481,7 @@ func SearchChannels(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"items":       pagedData,
+			"items":       channelsWithCooldowns(pagedData),
 			"total":       total,
 			"type_counts": typeCounts,
 		},
@@ -1264,6 +1286,29 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
+}
+
+func ResetChannelCooldown(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if _, err := model.GetChannelById(id, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	changed, err := service.ResetChannelCooldown(id)
+	if err != nil {
+		common.SysError(common.LogText("channel cooldown reset failed: channel=%d error=%v", id, err))
+		common.ApiErrorT(c, "Failed to reset channel cooldown")
+		return
+	}
+	recordManageAudit(c, "channel.cooldown_reset", map[string]any{
+		"id":      id,
+		"changed": changed,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": changed})
 }
 
 func UpdateChannelStatus(c *gin.Context) {
